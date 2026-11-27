@@ -1,4 +1,5 @@
 # Gesammelte Daten und Graphen bleiben lokal
+.venv
 stamm-statistik-*.json
 stamm-statistik-*.png
 __pycache__/
