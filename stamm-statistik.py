@@ -123,83 +123,101 @@ FARBEN = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#0ca30c", "#90
 GRAU = "#5f5e5a"
 
 
-def graph(db, spieler, tage, titel, pfad):
-    """Aufsummierte Linien je Spieler, drei Felder nebeneinander. Top 8 farbig, Rest grau."""
+def graph(db, spieler, tage, titel, pfad, no_new_rekord_est_factor=0.5):
+    """Ein großer Graph: Tageswert je Spieler = Farm-Ress + Raubzug-Ress (nicht aufsummiert).
+    Je Typ: an Rekordtagen der exakte Rekord, sonst faktor * zuletzt bekannter Rekord (Schätzung).
+    Start = erstes Datum in den Daten (tage[0]). Top 8 (nach Summe über den Zeitraum) farbig, Rest grau."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
+        import matplotlib.ticker as mticker
     except ImportError:
         print("Kein Graph: matplotlib fehlt (pip install matplotlib).", file=sys.stderr)
         return None
     if not tage:
         return None
-    x = [dt.date.fromisoformat(d) for d in tage]
-    kum = {}
+
+    erster = dt.date.fromisoformat(tage[0])
+    letzter = dt.date.fromisoformat(tage[-1])
+    # Jeder Kalendertag vom ersten Datum in den Daten bis zum letzten. Kein Nullpunkt davor.
+    x_alle = [erster + dt.timedelta(days=i) for i in range((letzter - erster).days + 1)]
+
+    # Pro Spieler: (Datum, Wert) für jeden Tag.
+    # Rekordtag: exakter Wert. Kein Rekord: Faktor * zuletzt bekannter Rekord.
+    # Gibt es noch keinen bekannten Rekord (Datenpunkt fehlt), zählt der Typ 0.
+    reihen, gesamt = {}, {}
     for p in spieler:
-        kum[p] = {}
-        for t, _ in TYPEN:
-            summe, reihe = 0, []
-            for d in tage:
-                summe += db["tage"][d].get(p, {}).get(t, 0)
-                reihe.append(summe)
-            kum[p][t] = reihe
-    # Farbig: die Spitze jedes Feldes (zusammen max. 8 Spieler). Die Farbe folgt dem Spieler
-    # und ist in allen drei Feldern gleich.
-    rang = {t: sorted(spieler, key=lambda p: -kum[p][t][-1]) for t, _ in TYPEN}
-    for n in range(5, 0, -1):
-        bunt = []
-        for t, _ in TYPEN:
-            bunt += [p for p in rang[t][:n] if p not in bunt and kum[p][t][-1] > 0]
-        if len(bunt) <= 8:
-            break
+        punkte = []
+        letzt = {"loot_res": 0, "scavenge": 0}  # zuletzt bekannter Rekord je Typ
+        for xd in x_alle:
+            summe = 0
+            eintrag = db["tage"].get(xd.isoformat(), {}).get(p, {})
+            for t in letzt:
+                if t in eintrag:
+                    summe += eintrag[t]
+                    letzt[t] = max(letzt[t], eintrag[t])
+                else:
+                    summe += no_new_rekord_est_factor * letzt[t]
+            punkte.append((xd, summe))
+        reihen[p] = punkte
+        gesamt[p] = sum(w for _, w in punkte)  # Ranking der Farben
+
+    rang = sorted((p for p in spieler if gesamt[p] > 0), key=lambda p: -gesamt[p])
+    bunt = rang[:8]
     farbe = {p: FARBEN[i] for i, p in enumerate(bunt)}
+
     bg, ink, ink2, gitter = "#1a1a19", "#f0efec", "#c3c2b7", "#2e2e2b"
-    plt.rcParams.update({"font.size": 11, "text.color": ink, "axes.labelcolor": ink2,
+    plt.rcParams.update({"font.size": 12, "text.color": ink, "axes.labelcolor": ink2,
                          "xtick.color": ink2, "ytick.color": ink2})
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5.4), dpi=110, facecolor=bg)
-    for ax, (t, name) in zip(axes, TYPEN):
-        ax.set_facecolor(bg)
-        for p in spieler:
-            if p not in farbe:
-                ax.plot(x, kum[p][t], color=GRAU, lw=1, alpha=0.7, zorder=1)
-        for p in reversed(bunt):
-            ax.plot(x, kum[p][t], color=farbe[p], lw=2, marker="o", ms=5,
-                    markeredgecolor=bg, markeredgewidth=1.5, zorder=2)
-        # Namen der Top dieses Feldes direkt ans Linienende, ohne Überlappung
-        oben = max([kum[p][t][-1] for p in spieler] + [1])
-        ax.set_ylim(0, oben * 1.06)
-        top = [p for p in rang[t][:n] if p in farbe]
-        span = max(1, (x[-1] - x[0]).days)
-        pos, abstand = [], oben * 0.075
-        for p in sorted(top, key=lambda p: -kum[p][t][-1]):
-            y = kum[p][t][-1]
-            if pos and pos[-1] - y < abstand:
-                y = pos[-1] - abstand
-            pos.append(y)
-            ax.text(mdates.date2num(x[-1]) + span * 0.03, y, spieler[p], color=ink, fontsize=10, va="center")
-        rechts = x[-1] + dt.timedelta(days=max(1, (x[-1] - x[0]).days) * 0.45 or 1)
-        links = x[0] - dt.timedelta(days=0.3) if len(x) > 1 else x[0] - dt.timedelta(days=1)
-        ax.set_xlim(links, rechts)
-        ax.set_title(name, loc="left", fontsize=13, color=ink, pad=8)
-        ax.grid(axis="y", color=gitter, lw=1)
-        ax.set_axisbelow(True)
-        for sp in ax.spines.values():
-            sp.set_visible(False)
-        ax.tick_params(length=0)
-        ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:,.0f}".replace(",", ".")))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(x) // 6)))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m."))
-    griffe = [plt.Line2D([], [], color=farbe[p], lw=2, marker="o", ms=5) for p in bunt]
+    fig, ax = plt.subplots(figsize=(16, 9), dpi=110, facecolor=bg)
+    ax.set_facecolor(bg)
+
+    # Graue Spieler zuerst (hinten), dann die farbigen von hinten nach vorn
+    for p in rang[8:]:
+        xs, ys = zip(*reihen[p])
+        ax.plot(xs, ys, color=GRAU, lw=1, alpha=0.6, marker="o", ms=3, zorder=1)
+    for p in reversed(bunt):
+        xs, ys = zip(*reihen[p])
+        ax.plot(xs, ys, color=farbe[p], lw=2.2, marker="o", ms=6,
+                markeredgecolor=bg, markeredgewidth=1.5, zorder=2)
+
+    oben = max([w for p in spieler for _, w in reihen[p]] + [1])
+    ax.set_ylim(0, oben * 1.08)
+
+    # Namen der Top-Spieler direkt ans Linienende, in Linienfarbe und fett, ohne Überlappung
+    span = max(1, (x_alle[-1] - x_alle[0]).days)
+    pos, abstand = [], oben * 0.04
+    for p in sorted(bunt, key=lambda p: -reihen[p][-1][1]):
+        y = reihen[p][-1][1]
+        if pos and pos[-1] - y < abstand:
+            y = pos[-1] - abstand
+        pos.append(y)
+        ax.text(mdates.date2num(x_alle[-1]) + span * 0.015, y, spieler[p],
+                color=farbe[p], fontsize=11, fontweight="bold", va="center")
+    rechts = x_alle[-1] + dt.timedelta(days=span * 0.2)
+    ax.set_xlim(x_alle[0] - dt.timedelta(days=0.3), rechts)
+
+    ax.grid(axis="y", color=gitter, lw=1)
+    ax.set_axisbelow(True)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.tick_params(length=0)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}".replace(",", ".")))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(x_alle) // 12)))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m."))
+    ax.set_ylabel(f"Farm-Ress + Raubzug-Ress pro Tag (Rekordtag exakt, sonst {no_new_rekord_est_factor:g} × letzter Rekord)")
+
+    griffe = [plt.Line2D([], [], color=farbe[p], lw=2.2, marker="o", ms=6) for p in bunt]
     namen = [spieler[p] for p in bunt]
-    if len(spieler) > len(bunt):
+    if len(rang) > len(bunt):
         griffe.append(plt.Line2D([], [], color=GRAU, lw=1))
-        namen.append(f"Weitere ({len(spieler) - len(bunt)})")
+        namen.append(f"Weitere ({len(rang) - len(bunt)})")
     fig.legend(griffe, namen, loc="upper left", ncol=min(len(namen), 9), frameon=False,
-               bbox_to_anchor=(0.005, 0.925), fontsize=10.5, handlelength=1.6, columnspacing=1.4)
-    fig.suptitle(titel, x=0.012, y=0.985, ha="left", fontsize=15, fontweight="bold", color=ink)
-    fig.tight_layout(rect=(0, 0, 1, 0.87), w_pad=3)
+               bbox_to_anchor=(0.005, 0.925), fontsize=11.5, handlelength=1.6, columnspacing=1.4)
+    fig.suptitle(titel, x=0.012, y=0.985, ha="left", fontsize=16, fontweight="bold", color=ink)
+    fig.tight_layout(rect=(0, 0, 1, 0.88), w_pad=3)
     fig.savefig(pfad, facecolor=bg)
     plt.close(fig)
     return pfad
@@ -288,7 +306,7 @@ def main():
 
     bild = None
     if not a.kein_graph:
-        bild = graph(db, spieler, tage, f"{stammname} – aufsummiert seit {seit}", datei.with_suffix(".png"))
+        bild = graph(db, spieler, tage, f"{stammname} – seit {seit}", datei.with_suffix(".png"))
         if bild:
             print(f"Graph gespeichert: {bild}", file=sys.stderr)
 
