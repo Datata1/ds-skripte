@@ -1,0 +1,2 @@
+matplotlib  # optional, nur für den Graphen
+tzdata; sys_platform == "win32"

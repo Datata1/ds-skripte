@@ -1,0 +1,4 @@
+# Gesammelte Daten und Graphen bleiben lokal
+stamm-statistik-*.json
+stamm-statistik-*.png
+__pycache__/
