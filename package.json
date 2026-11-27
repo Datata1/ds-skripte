@@ -1,0 +1,19 @@
+{
+  "name": "ds-skripte",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Datata1/ds-skripte.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Datata1/ds-skripte/issues"
+  },
+  "homepage": "https://github.com/Datata1/ds-skripte#readme",
+  "devDependencies": {
+    "terser": "^5.36.0"
+  },
+  "private": true
+}

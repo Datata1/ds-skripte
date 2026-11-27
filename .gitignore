@@ -2,3 +2,6 @@
 stamm-statistik-*.json
 stamm-statistik-*.png
 __pycache__/
+
+node_modules/
+_site/
